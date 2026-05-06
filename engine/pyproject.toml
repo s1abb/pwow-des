@@ -1,0 +1,8 @@
+[project]
+name = "engine"
+version = "0.0.0"
+description = "Minimal discrete-event simulation engine (skeleton)."
+authors = []
+
+[tool.poetry]
+

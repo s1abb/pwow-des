@@ -1,0 +1,10 @@
+repos:
+  - repo: local
+    hooks:
+      - id: check-examples
+        name: Check example scripts for docstrings and logging guard
+        entry: python tools/hooks/check_examples.py
+        language: system
+        files: ^engine/examples/.*\.py$
+        pass_filenames: false
+        stages: [commit]
