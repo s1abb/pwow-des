@@ -1,0 +1,15 @@
+services:
+  dev:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    volumes:
+      - ..:/workspace:cached
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    environment:
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8888:8888"
+    command: /bin/bash
