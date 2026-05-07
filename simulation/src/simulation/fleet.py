@@ -1,17 +1,30 @@
-"""Fleet spawner for Phase 2 — multiple trucks sharing resources."""
+"""Fleet spawner for Phase 2 / Phase 3 — trucks and shovels sharing resources."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .config import N_TRUCKS, TRUCK_PM_SCHEDULE
-from .stats import TruckStats
+from .config import N_SHOVELS, N_TRUCKS, SHOVEL_PM_SCHEDULE, TRUCK_PM_SCHEDULE
+from .shovel import shovel_process
+from .stats import ShovelStats, TruckStats
 from .truck import truck_process
 
 if TYPE_CHECKING:
     from engine.environment import Environment
     from engine.resource import Resource
+
+
+def _stagger(pm_schedule: dict, rng: np.random.Generator) -> dict[str, float]:
+    """Draw randomised initial PM thresholds, staggered within (0, interval].
+
+    Using (interval * 0.05, interval] (exclusive near-zero) avoids a PM
+    firing at simulation t=0.
+    """
+    return {
+        pname: float(rng.uniform(cfg["interval"] * 0.05, cfg["interval"]))
+        for pname, cfg in pm_schedule.items()
+    }
 
 
 def run_fleet(
@@ -20,42 +33,42 @@ def run_fleet(
     mechanic: "Resource",
     rng: np.random.Generator,
     n_trucks: int = N_TRUCKS,
-) -> list[TruckStats]:
-    """Spawn *n_trucks* truck processes sharing *bay* and *mechanic*.
+    n_shovels: int = N_SHOVELS,
+) -> tuple[list[TruckStats], list[ShovelStats]]:
+    """Spawn truck and shovel processes sharing *bay* and *mechanic*.
 
-    Each truck receives an independent child RNG derived from the master so
-    results are independent but fully reproducible from a single seed.
+    Each piece of equipment receives an independent child RNG derived from
+    the master so results are independent but fully reproducible from a
+    single seed.  PM clocks are staggered so all equipment doesn't arrive
+    at the workshop simultaneously on day one.
 
-    PM clocks are randomised within the first interval for each PM so trucks
-    don't all arrive at the workshop simultaneously on day one.  The offset is
-    drawn uniformly from [0, interval), meaning the first PM fires somewhere
-    in the first full interval.
+    Returns a (truck_stats, shovel_stats) tuple. Either list may be empty
+    when the corresponding count is zero.
     """
-    fleet_stats: list[TruckStats] = []
-
+    truck_stats: list[TruckStats] = []
     for i in range(n_trucks):
-        # Independent child RNG per truck.
         truck_rng = np.random.default_rng(rng.integers(0, 2**32))
-
-        # Staggered initial PM thresholds: uniform draw in (0, interval].
-        # Using (0, interval] (exclusive 0) avoids a PM firing at t=0.
-        pm_offsets = {
-            pname: float(truck_rng.uniform(cfg["interval"] * 0.05, cfg["interval"]))
-            for pname, cfg in TRUCK_PM_SCHEDULE.items()
-        }
-
+        pm_offsets = _stagger(TRUCK_PM_SCHEDULE, truck_rng)
         stats = TruckStats(name=f"Truck-{i}")
-        fleet_stats.append(stats)
+        truck_stats.append(stats)
         env.process(
             truck_process(
-                env,
-                f"Truck-{i}",
-                bay,
-                mechanic,
-                stats,
-                truck_rng,
+                env, f"Truck-{i}", bay, mechanic, stats, truck_rng,
                 pm_offsets=pm_offsets,
             )
         )
 
-    return fleet_stats
+    shovel_stats: list[ShovelStats] = []
+    for i in range(n_shovels):
+        shovel_rng = np.random.default_rng(rng.integers(0, 2**32))
+        pm_offsets = _stagger(SHOVEL_PM_SCHEDULE, shovel_rng)
+        stats = ShovelStats(name=f"Shovel-{i}")
+        shovel_stats.append(stats)
+        env.process(
+            shovel_process(
+                env, f"Shovel-{i}", bay, mechanic, stats, shovel_rng,
+                pm_offsets=pm_offsets,
+            )
+        )
+
+    return truck_stats, shovel_stats

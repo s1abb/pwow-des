@@ -24,30 +24,30 @@ TRUCK_PREMATURE_FAILURE = {
 }
 
 # ── SHOVEL: Scheduled PM & Overhaul ──────────────────────────────────────────
-# (stubbed for Phase 3)
-# SHOVEL_PM_SCHEDULE = {
-#     "daily_inspect":    {"interval": 10,     "duration_mean": 0.5, "duration_sd": 0.2,  "bay": False},
-#     "PM_A":             {"interval": 250,    "duration_mean": 3,   "duration_sd": 0.8,  "bay": False},
-#     "PM_B":             {"interval": 1_000,  "duration_mean": 6,   "duration_sd": 1.5,  "bay": False},
-#     "GET_replace":      {"interval": 1_000,  "duration_mean": 4,   "duration_sd": 1.0,  "bay": False},
-#     "pin_service":      {"interval": 3_000,  "duration_mean": 8,   "duration_sd": 2.0,  "bay": False},
-#     "hydraulic_OH":     {"interval": 4_000,  "duration_mean": 16,  "duration_sd": 4.0,  "bay": True},
-#     "swing_ring_OH":    {"interval": 6_000,  "duration_mean": 24,  "duration_sd": 6.0,  "bay": True},
-#     "undercarriage_OH": {"interval": 8_000,  "duration_mean": 48,  "duration_sd": 10.0, "bay": True},
-#     "swing_gear_OH":    {"interval": 12_000, "duration_mean": 32,  "duration_sd": 8.0,  "bay": True},
-#     "engine_rebuild":   {"interval": 20_000, "duration_mean": 240, "duration_sd": 24,   "bay": True},
-# }
+# bay: False → mechanic only (on-site); bay: True → bay + mechanic (workshop)
+SHOVEL_PM_SCHEDULE = {
+    "PM_A":             {"interval": 250,    "duration_mean": 3,   "duration_sd": 0.8,  "bay": False},
+    "PM_B":             {"interval": 1_000,  "duration_mean": 6,   "duration_sd": 1.5,  "bay": False},
+    "GET_replace":      {"interval": 1_000,  "duration_mean": 4,   "duration_sd": 1.0,  "bay": False},
+    "pin_service":      {"interval": 3_000,  "duration_mean": 8,   "duration_sd": 2.0,  "bay": False},
+    "hydraulic_OH":     {"interval": 4_000,  "duration_mean": 16,  "duration_sd": 4.0,  "bay": True},
+    "swing_ring_OH":    {"interval": 6_000,  "duration_mean": 24,  "duration_sd": 6.0,  "bay": True},
+    "undercarriage_OH": {"interval": 8_000,  "duration_mean": 48,  "duration_sd": 10.0, "bay": True},
+    "swing_gear_OH":    {"interval": 12_000, "duration_mean": 32,  "duration_sd": 8.0,  "bay": True},
+    "engine_rebuild":   {"interval": 20_000, "duration_mean": 240, "duration_sd": 24,   "bay": True},
+}
 
 # ── SHOVEL: Premature Failures — Weibull(shape, scale) ───────────────────────
-# (stubbed for Phase 3)
-# SHOVEL_PREMATURE_FAILURE = {
-#     "engine":        {"shape": 2.0, "scale":  4_000, "repair_mean": 48,  "repair_sd": 24,  "bay": True},
-#     "hydraulics":    {"shape": 1.5, "scale":  2_500, "repair_mean": 16,  "repair_sd": 4,   "bay": True},
-#     "swing_ring":    {"shape": 2.0, "scale":  4_000, "repair_mean": 48,  "repair_sd": 12,  "bay": True},
-#     "boom_pins":     {"shape": 2.2, "scale":  2_000, "repair_mean": 12,  "repair_sd": 3,   "bay": True},
-#     "GET":           {"shape": 1.8, "scale":    600,  "repair_mean": 4,   "repair_sd": 1,   "bay": True},
-#     "undercarriage": {"shape": 2.5, "scale":  5_000, "repair_mean": 24,  "repair_sd": 6,   "bay": True},
-# }
+# Engine scale 12,000 matches the concept-doc narrative table (same as truck).
+# The 4,000 figure in the concept doc's Python block was a transcription error.
+SHOVEL_PREMATURE_FAILURE = {
+    "engine":        {"shape": 2.0, "scale": 12_000, "repair_mean": 48,  "repair_sd": 24,  "bay": True},
+    "hydraulics":    {"shape": 1.5, "scale":  2_500, "repair_mean": 16,  "repair_sd": 4,   "bay": True},
+    "swing_ring":    {"shape": 2.0, "scale":  4_000, "repair_mean": 48,  "repair_sd": 12,  "bay": True},
+    "boom_pins":     {"shape": 2.2, "scale":  2_000, "repair_mean": 12,  "repair_sd": 3,   "bay": True},
+    "GET":           {"shape": 1.8, "scale":    600,  "repair_mean": 4,   "repair_sd": 1,   "bay": True},
+    "undercarriage": {"shape": 2.5, "scale":  5_000, "repair_mean": 24,  "repair_sd": 6,   "bay": True},
+}
 
 # ── Shared Resources ──────────────────────────────────────────────────────────
 N_BAYS      = 4   # workshop bays (all truck events; shovel major events only)
@@ -55,7 +55,7 @@ N_MECHANICS = 6   # mechanics — day-shift baseline
 
 # ── Fleet Size ────────────────────────────────────────────────────────────────
 N_TRUCKS  = 15
-N_SHOVELS = 0   # Phase 2: no shovels yet
+N_SHOVELS = 3
 
 # ── Opportunistic Maintenance Window ─────────────────────────────────────────
 OPP_WINDOW_HRS = 50   # combine premature failure + scheduled PM when this close
@@ -93,6 +93,32 @@ SHIFT_SCHEDULE = [
     {"name": "night_crib_2",    "start":  2.5, "duration": 0.5, "n_mechanics": 2, "productive": False},
     {"name": "night_working_3", "start":  3.0, "duration": 3.0, "n_mechanics": 4, "productive": True},
 ]
+
+# ── Equipment Utilisation Schedule ───────────────────────────────────────────
+# Per-equipment fraction of each calendar year that the machine is deployed.
+# 1.0 = fully utilised; 0.6 = 60% utilisation (PM clocks accumulate 40% slower).
+# Equipment not listed here defaults to 1.0 for all years.
+# Trucks/shovels with a ramp-down to 0 will idle out their remaining sim time.
+UTILISATION: dict[str, dict[int, float]] = {
+    "Shovel-0": {2026: 1.0, 2027: 1.0, 2028: 1.0, 2029: 1.0, 2030: 1.0},
+    "Shovel-1": {2026: 1.0, 2027: 1.0, 2028: 1.0, 2029: 1.0, 2030: 0.6},
+    "Shovel-2": {2026: 1.0, 2027: 1.0, 2028: 0.8, 2029: 0.6, 2030: 0.4},
+    "Truck-0":  {2026: 1.0, 2027: 1.0, 2028: 1.0, 2029: 1.0, 2030: 1.0},
+    "Truck-1":  {2026: 1.0, 2027: 1.0, 2028: 1.0, 2029: 1.0, 2030: 1.0},
+    "Truck-2":  {2026: 1.0, 2027: 1.0, 2028: 1.0, 2029: 1.0, 2030: 1.0},
+    "Truck-3":  {2026: 1.0, 2027: 1.0, 2028: 1.0, 2029: 1.0, 2030: 1.0},
+    "Truck-4":  {2026: 1.0, 2027: 1.0, 2028: 1.0, 2029: 1.0, 2030: 1.0},
+    "Truck-5":  {2026: 1.0, 2027: 1.0, 2028: 1.0, 2029: 1.0, 2030: 1.0},
+    "Truck-6":  {2026: 1.0, 2027: 1.0, 2028: 0.8, 2029: 0.6, 2030: 0.4},
+    "Truck-7":  {2026: 1.0, 2027: 1.0, 2028: 0.8, 2029: 0.6, 2030: 0.4},
+    "Truck-8":  {2026: 1.0, 2027: 1.0, 2028: 0.8, 2029: 0.6, 2030: 0.4},
+    "Truck-9":  {2026: 1.0, 2027: 1.0, 2028: 0.8, 2029: 0.6, 2030: 0.4},
+    "Truck-10": {2026: 1.0, 2027: 0.8, 2028: 0.6, 2029: 0.4, 2030: 0.0},
+    "Truck-11": {2026: 1.0, 2027: 0.8, 2028: 0.6, 2029: 0.4, 2030: 0.0},
+    "Truck-12": {2026: 1.0, 2027: 0.8, 2028: 0.6, 2029: 0.4, 2030: 0.0},
+    "Truck-13": {2026: 1.0, 2027: 0.8, 2028: 0.6, 2029: 0.4, 2030: 0.0},
+    "Truck-14": {2026: 1.0, 2027: 0.8, 2028: 0.6, 2029: 0.4, 2030: 0.0},
+}
 
 # ── Simulation Settings ───────────────────────────────────────────────────────
 SIM_DURATION = 43_800  # hours (5 years)

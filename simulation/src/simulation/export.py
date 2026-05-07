@@ -18,22 +18,24 @@ def _sim_hours_to_dt(hours: float) -> str:
     return (SIM_START + timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
 
 
-def write_truck_summary(
+def write_fleet_summary(
     fleet_stats: FleetStats,
-    path: str | os.PathLike = "output/truck_summary.csv",
+    path: str | os.PathLike = "output/fleet_summary.csv",
     sim_duration: float = SIM_DURATION,
 ) -> Path:
-    """Write one row per truck with KPI columns.
+    """Write one row per piece of equipment (trucks and shovels) with KPI columns.
 
-    Columns: truck, pa_pct, operating_hours, downtime_scheduled,
-    downtime_unscheduled, queue_time, total_events, scheduled_events,
-    unscheduled_events, opportunistic_events, mean_queue_time_hrs
+    Columns: equipment, equipment_type, pa_pct, operating_hours,
+    downtime_scheduled, downtime_unscheduled, queue_time, total_events,
+    scheduled_events, unscheduled_events, opportunistic_events,
+    mean_queue_time_hrs
     """
     dest = Path(path)
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     fieldnames = [
-        "truck",
+        "equipment",
+        "equipment_type",
         "pa_pct",
         "operating_hours",
         "downtime_scheduled",
@@ -46,14 +48,21 @@ def write_truck_summary(
         "mean_queue_time_hrs",
     ]
 
+    all_equipment = [
+        (equip, "truck") for equip in fleet_stats.trucks
+    ] + [
+        (equip, "shovel") for equip in fleet_stats.shovels
+    ]
+
     with dest.open("w", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
-        for truck in fleet_stats.trucks:
-            s = truck.summary(sim_duration)
+        for equip, equip_type in all_equipment:
+            s = equip.summary(sim_duration)
             writer.writerow(
                 {
-                    "truck": truck.name,
+                    "equipment": equip.name,
+                    "equipment_type": equip_type,
                     "pa_pct": round(s["pa_pct"], 4),
                     "operating_hours": round(s["operating_hours"], 4),
                     "downtime_scheduled": round(s["downtime_scheduled"], 4),
@@ -70,28 +79,34 @@ def write_truck_summary(
     return dest
 
 
+# Backward-compatible alias used by any existing callers.
+write_truck_summary = write_fleet_summary
+
+
 def write_events(
     fleet_stats: FleetStats,
     path: str | os.PathLike = "output/events.csv",
 ) -> Path:
-    """Write one row per maintenance event across all trucks.
+    """Write one row per maintenance event across all trucks and shovels.
 
-    Columns: truck, sim_time, event_type, name, all_pms, cum_op_hrs, op_start,
-    queue_start, repair_start, repair_end, duration, queue_time
+    Columns: equipment, equipment_type, sim_time, event_type, name, all_pms,
+    bay_used, cum_op_hrs, op_start, queue_start, repair_start, repair_end,
+    duration, queue_time
 
-    sim_time is the simulation clock (hours) when the event triggered, i.e.
-    the moment the truck stopped operating and requested a maintenance bay.
-    It equals queue_start and is provided as a convenient top-level timestamp.
+    sim_time is the ISO-8601 UTC datetime when the event triggered.
+    bay_used is True for all truck events and for shovel major events.
     """
     dest = Path(path)
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     fieldnames = [
-        "truck",
+        "equipment",
+        "equipment_type",
         "sim_time",
         "event_type",
         "name",
         "all_pms",
+        "bay_used",
         "cum_op_hrs",
         "op_start",
         "queue_start",
@@ -101,18 +116,27 @@ def write_events(
         "queue_time",
     ]
 
+    all_equipment = [
+        (equip, "truck") for equip in fleet_stats.trucks
+    ] + [
+        (equip, "shovel") for equip in fleet_stats.shovels
+    ]
+
     with dest.open("w", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
-        for truck in fleet_stats.trucks:
-            for e in truck.events:
+        for equip, equip_type in all_equipment:
+            for e in equip.events:
                 writer.writerow(
                     {
-                        "truck": truck.name,
+                        "equipment": equip.name,
+                        "equipment_type": equip_type,
                         "sim_time": _sim_hours_to_dt(e["queue_start"]),
                         "event_type": e["type"],
                         "name": e["name"],
                         "all_pms": "|".join(e.get("all_pms", [])),
+                        # Trucks always use a bay; shovels record bay_used explicitly.
+                        "bay_used": e.get("bay_used", True),
                         "cum_op_hrs": round(e["cum_op_hrs"], 4),
                         "op_start": round(e["op_start"], 4),
                         "queue_start": round(e["queue_start"], 4),

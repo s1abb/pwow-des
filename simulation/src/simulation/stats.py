@@ -79,23 +79,51 @@ class TruckStats:
 
 @dataclass
 class FleetStats:
-    """Aggregates per-truck KPIs into fleet-level summary statistics."""
+    """Aggregates per-truck and per-shovel KPIs into fleet-level summaries."""
 
     trucks: list[TruckStats]
+    shovels: list["ShovelStats"] = field(default_factory=list)
 
     def summary(self, sim_duration: float = SIM_DURATION) -> dict[str, Any]:
         per_truck = [t.summary(sim_duration) for t in self.trucks]
-        pa_values = [s["pa_pct"] for s in per_truck]
-        all_events = [e for t in self.trucks for e in t.events]
+        per_shovel = [s.summary(sim_duration) for s in self.shovels]
 
-        return {
-            "fleet_pa_pct_mean": mean(pa_values),
-            "fleet_pa_pct_min": min(pa_values),
-            "fleet_pa_pct_max": max(pa_values),
-            "total_scheduled_events": sum(s["scheduled_events"] for s in per_truck),
-            "total_unscheduled_events": sum(s["unscheduled_events"] for s in per_truck),
-            "total_opportunistic_events": sum(s["opportunistic_events"] for s in per_truck),
-            "mean_queue_time_hrs": mean(s["mean_queue_time_hrs"] for s in per_truck),
+        truck_pa = [s["pa_pct"] for s in per_truck]
+        shovel_pa = [s["pa_pct"] for s in per_shovel]
+        combined_pa = truck_pa + shovel_pa
+
+        all_events = (
+            [e for t in self.trucks for e in t.events]
+            + [e for s in self.shovels for e in s.events]
+        )
+
+        result: dict[str, Any] = {
+            # Backward-compatible key: mean over all equipment present.
+            "fleet_pa_pct_mean": mean(combined_pa),
+            "fleet_pa_pct_min": min(combined_pa),
+            "fleet_pa_pct_max": max(combined_pa),
+            # Per-type truck KPIs.
+            "truck_pa_pct_mean": mean(truck_pa),
+            "truck_pa_pct_min": min(truck_pa),
+            "truck_pa_pct_max": max(truck_pa),
+            "total_scheduled_events": sum(s["scheduled_events"] for s in per_truck + per_shovel),
+            "total_unscheduled_events": sum(s["unscheduled_events"] for s in per_truck + per_shovel),
+            "total_opportunistic_events": sum(s["opportunistic_events"] for s in per_truck + per_shovel),
+            "mean_queue_time_hrs": mean(s["mean_queue_time_hrs"] for s in per_truck + per_shovel),
             "peak_queue_time_hrs": max((e["queue_time"] for e in all_events), default=0.0),
             "per_truck": per_truck,
         }
+
+        if per_shovel:
+            result["shovel_pa_pct_mean"] = mean(shovel_pa)
+            result["shovel_pa_pct_min"] = min(shovel_pa)
+            result["shovel_pa_pct_max"] = max(shovel_pa)
+            result["per_shovel"] = per_shovel
+
+        return result
+
+
+# ShovelStats is structurally identical to TruckStats — same fields, same
+# summary() logic.  The equipment type is identified by the ``name`` field
+# (e.g. "Shovel-0") and by the FleetStats container.
+ShovelStats = TruckStats
