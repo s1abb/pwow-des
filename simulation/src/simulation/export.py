@@ -1,0 +1,126 @@
+"""CSV export helpers for simulation output KPIs."""
+from __future__ import annotations
+
+import csv
+import os
+from datetime import timedelta
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .stats import FleetStats, TruckStats
+
+from .config import SIM_DURATION, SIM_START
+
+
+def _sim_hours_to_dt(hours: float) -> str:
+    """Convert simulation hours offset to an ISO-8601 UTC datetime string."""
+    return (SIM_START + timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+
+
+def write_truck_summary(
+    fleet_stats: FleetStats,
+    path: str | os.PathLike = "output/truck_summary.csv",
+    sim_duration: float = SIM_DURATION,
+) -> Path:
+    """Write one row per truck with KPI columns.
+
+    Columns: truck, pa_pct, operating_hours, downtime_scheduled,
+    downtime_unscheduled, queue_time, total_events, scheduled_events,
+    unscheduled_events, opportunistic_events, mean_queue_time_hrs
+    """
+    dest = Path(path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    fieldnames = [
+        "truck",
+        "pa_pct",
+        "operating_hours",
+        "downtime_scheduled",
+        "downtime_unscheduled",
+        "queue_time",
+        "total_events",
+        "scheduled_events",
+        "unscheduled_events",
+        "opportunistic_events",
+        "mean_queue_time_hrs",
+    ]
+
+    with dest.open("w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        for truck in fleet_stats.trucks:
+            s = truck.summary(sim_duration)
+            writer.writerow(
+                {
+                    "truck": truck.name,
+                    "pa_pct": round(s["pa_pct"], 4),
+                    "operating_hours": round(s["operating_hours"], 4),
+                    "downtime_scheduled": round(s["downtime_scheduled"], 4),
+                    "downtime_unscheduled": round(s["downtime_unscheduled"], 4),
+                    "queue_time": round(s["queue_time"], 4),
+                    "total_events": s["total_events"],
+                    "scheduled_events": s["scheduled_events"],
+                    "unscheduled_events": s["unscheduled_events"],
+                    "opportunistic_events": s["opportunistic_events"],
+                    "mean_queue_time_hrs": round(s["mean_queue_time_hrs"], 4),
+                }
+            )
+
+    return dest
+
+
+def write_events(
+    fleet_stats: FleetStats,
+    path: str | os.PathLike = "output/events.csv",
+) -> Path:
+    """Write one row per maintenance event across all trucks.
+
+    Columns: truck, sim_time, event_type, name, all_pms, cum_op_hrs, op_start,
+    queue_start, repair_start, repair_end, duration, queue_time
+
+    sim_time is the simulation clock (hours) when the event triggered, i.e.
+    the moment the truck stopped operating and requested a maintenance bay.
+    It equals queue_start and is provided as a convenient top-level timestamp.
+    """
+    dest = Path(path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    fieldnames = [
+        "truck",
+        "sim_time",
+        "event_type",
+        "name",
+        "all_pms",
+        "cum_op_hrs",
+        "op_start",
+        "queue_start",
+        "repair_start",
+        "repair_end",
+        "duration",
+        "queue_time",
+    ]
+
+    with dest.open("w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        for truck in fleet_stats.trucks:
+            for e in truck.events:
+                writer.writerow(
+                    {
+                        "truck": truck.name,
+                        "sim_time": _sim_hours_to_dt(e["queue_start"]),
+                        "event_type": e["type"],
+                        "name": e["name"],
+                        "all_pms": "|".join(e.get("all_pms", [])),
+                        "cum_op_hrs": round(e["cum_op_hrs"], 4),
+                        "op_start": round(e["op_start"], 4),
+                        "queue_start": round(e["queue_start"], 4),
+                        "repair_start": round(e["repair_start"], 4),
+                        "repair_end": round(e["repair_end"], 4),
+                        "duration": round(e["duration"], 4),
+                        "queue_time": round(e["queue_time"], 4),
+                    }
+                )
+
+    return dest
