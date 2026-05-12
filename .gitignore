@@ -28,3 +28,11 @@ dist/
 
 # Engine local installs
 engine/.venv
+
+# Large data files
+*.csv
+*.xlsx
+*.xls
+*.parquet
+*.db
+*.sqlite

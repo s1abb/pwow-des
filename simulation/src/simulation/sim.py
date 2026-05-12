@@ -18,7 +18,7 @@ import numpy as np
 from engine.environment import Environment
 from engine.resource import Resource
 
-from .config import N_BAYS, N_MECHANICS, N_SHOVELS, RANDOM_SEED, SHIFT_SCHEDULE, SIM_DURATION
+from .config import N_BAYS, N_MECHANICS, PREMATURE_FAILURE, RANDOM_SEED, SHIFT_SCHEDULE, SIM_DURATION
 from .fleet import run_fleet
 from .shift import ShiftScheduler
 from .stats import FleetStats, ShovelStats, TruckStats
@@ -44,7 +44,8 @@ def run_phase1(
     mechanic = Resource(capacity=_PHASE1_MECHANICS)
     stats = TruckStats(name="Truck-0")
 
-    env.process(truck_process(env, "Truck-0", bay, mechanic, stats, rng))
+    env.process(truck_process(env, "Truck-0", bay, mechanic, stats, rng,
+                               failure_cfg=PREMATURE_FAILURE["Cat_793F"]))
     env.run(until=SIM_DURATION)
 
     return stats, bay, mechanic
@@ -69,7 +70,7 @@ def run_phase2(
     # Start shift scheduler — adjusts mechanic capacity at each phase boundary.
     ShiftScheduler(env, mechanic, SHIFT_SCHEDULE)
 
-    truck_stats, _ = run_fleet(env, bay, mechanic, rng, n_shovels=0)
+    truck_stats, _ = run_fleet(env, bay, mechanic, rng)
     fleet = FleetStats(trucks=truck_stats)
     env.run(until=SIM_DURATION)
 
@@ -81,6 +82,9 @@ def run_phase2(
 
 def run_phase3(
     seed: int = RANDOM_SEED,
+    n_bays: int = N_BAYS,
+    n_mechanics: int = N_MECHANICS,
+    shift_schedule: list[dict] | None = None,
 ) -> tuple[FleetStats, Resource, Resource]:
     """Run a Phase 3 simulation: 15 trucks + 3 shovels, shift-scheduled mechanics.
 
@@ -90,12 +94,12 @@ def run_phase3(
     """
     rng = np.random.default_rng(seed)
     env = Environment()
-    bay = Resource(capacity=N_BAYS)
-    mechanic = Resource(capacity=N_MECHANICS)
+    bay = Resource(capacity=n_bays)
+    mechanic = Resource(capacity=n_mechanics)
 
-    ShiftScheduler(env, mechanic, SHIFT_SCHEDULE)
+    ShiftScheduler(env, mechanic, shift_schedule if shift_schedule is not None else SHIFT_SCHEDULE)
 
-    truck_stats, shovel_stats = run_fleet(env, bay, mechanic, rng, n_shovels=N_SHOVELS)
+    truck_stats, shovel_stats = run_fleet(env, bay, mechanic, rng)
     fleet = FleetStats(trucks=truck_stats, shovels=shovel_stats)
     env.run(until=SIM_DURATION)
 

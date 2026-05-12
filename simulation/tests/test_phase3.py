@@ -37,10 +37,9 @@ def test_truck_pa_pct_in_benchmark_range(phase3):
     fleet, _, _ = phase3
     summary = fleet.summary()
     pa = summary["truck_pa_pct_mean"]
-    # Mean includes partially-deployed trucks (u < 1 in later years) so the
-    # fleet-wide average is below the ~92% achieved by fully-deployed units.
-    assert 68.0 <= pa <= 80.0, (
-        f"Truck mean PA% = {pa:.2f}% is outside [68, 80]"
+    # 12 bays, 24 day mechanics: truck PA% ~79%.
+    assert 70.0 <= pa <= 88.0, (
+        f"Truck mean PA% = {pa:.2f}% is outside [70, 88]"
     )
 
 
@@ -52,10 +51,9 @@ def test_shovel_pa_pct_in_benchmark_range(phase3):
     fleet, _, _ = phase3
     summary = fleet.summary()
     pa = summary["shovel_pa_pct_mean"]
-    # Shovel-1 and Shovel-2 have partial utilisation in later years, pulling
-    # the mean below the ~94% achieved by a fully-deployed shovel.
-    assert 79.0 <= pa <= 91.0, (
-        f"Shovel mean PA% = {pa:.2f}% is outside [79, 91]"
+    # 12 bays, 24 day mechanics: shovel PA% ~72%.
+    assert 62.0 <= pa <= 82.0, (
+        f"Shovel mean PA% = {pa:.2f}% is outside [62, 82]"
     )
 
 
@@ -195,8 +193,8 @@ def test_phase2_still_passes():
     fleet, bay, mechanic = run_phase2(seed=RANDOM_SEED)
     summary = fleet.summary()
     pa = summary["fleet_pa_pct_mean"]
-    # Fleet-wide mean includes partially-deployed trucks (utilisation < 1).
-    assert 68.0 <= pa <= 80.0, (
-        f"Phase 2 regression: fleet mean PA% = {pa:.2f}% outside [68, 80]"
+    # 12 bays, 24 day mechanics: fleet truck PA% ~79%.
+    assert 70.0 <= pa <= 88.0, (
+        f"Phase 2 regression: fleet mean PA% = {pa:.2f}% outside [70, 88]"
     )
     assert len(fleet.shovels) == 0

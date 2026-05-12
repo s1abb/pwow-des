@@ -36,18 +36,18 @@ class TruckStats:
 
         mean_queue = self.queue_time / total_events if total_events > 0 else 0.0
 
-        # MTBF per component — computed from successive premature failure times
-        comp_op_hrs: dict[str, list[float]] = defaultdict(list)
+        # MTBF per activity group — computed from successive premature failure times
+        ag_op_hrs: dict[str, list[float]] = defaultdict(list)
         last_failure_op: dict[str, float] = {}
         for e in self.events:
             if e["type"] == "premature":
-                comp = e["name"]
-                if comp in last_failure_op:
-                    comp_op_hrs[comp].append(e["cum_op_hrs"] - last_failure_op[comp])
-                last_failure_op[comp] = e["cum_op_hrs"]
+                ag = e["name"]
+                if ag in last_failure_op:
+                    ag_op_hrs[ag].append(e["cum_op_hrs"] - last_failure_op[ag])
+                last_failure_op[ag] = e["cum_op_hrs"]
         mtbf = {
-            comp: sum(intervals) / len(intervals)
-            for comp, intervals in comp_op_hrs.items()
+            ag: sum(intervals) / len(intervals)
+            for ag, intervals in ag_op_hrs.items()
             if intervals
         }
 
@@ -72,7 +72,7 @@ class TruckStats:
             "unscheduled_events": len(unscheduled),
             "opportunistic_events": len(opportunistic),
             "mean_queue_time_hrs": mean_queue,
-            "mtbf_by_component": mtbf,
+            "mtbf_by_activity_group": mtbf,
             "mttr_by_event_type": mttr,
         }
 

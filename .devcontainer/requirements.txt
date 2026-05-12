@@ -6,3 +6,7 @@ ipywidgets>=8.1.0
 # Core data
 pandas>=2.1.0
 numpy>=1.24.0
+
+# OpenAI
+openai>=1.30.0
+python-dotenv>=1.0.0

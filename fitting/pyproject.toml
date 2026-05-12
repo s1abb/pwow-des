@@ -1,0 +1,14 @@
+[project]
+name = "fitting"
+version = "0.1.0"
+description = "Actuals-fitting pipeline for mining fleet DES simulation."
+requires-python = ">=3.11"
+dependencies = ["pandas", "openpyxl", "scipy", "numpy"]
+
+[build-system]
+requires = ["flit_core>=3.2"]
+build-backend = "flit_core.buildapi"
+
+[tool.flit.module]
+name = "fitting"
+source-dir = "src"

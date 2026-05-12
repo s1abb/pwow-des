@@ -5,7 +5,15 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .config import N_SHOVELS, N_TRUCKS, SHOVEL_PM_SCHEDULE, TRUCK_PM_SCHEDULE
+from .config import (
+    N_FLEET,
+    PREMATURE_FAILURE,
+    SHOVEL_PM_SCHEDULE,
+    TRUCK_PM_SCHEDULE,
+    USE_FITTED_PARAMS,
+    _SHOVEL_MODELS,
+    _TRUCK_MODELS,
+)
 from .shovel import shovel_process
 from .stats import ShovelStats, TruckStats
 from .truck import truck_process
@@ -32,8 +40,6 @@ def run_fleet(
     bay: "Resource",
     mechanic: "Resource",
     rng: np.random.Generator,
-    n_trucks: int = N_TRUCKS,
-    n_shovels: int = N_SHOVELS,
 ) -> tuple[list[TruckStats], list[ShovelStats]]:
     """Spawn truck and shovel processes sharing *bay* and *mechanic*.
 
@@ -42,33 +48,51 @@ def run_fleet(
     single seed.  PM clocks are staggered so all equipment doesn't arrive
     at the workshop simultaneously on day one.
 
-    Returns a (truck_stats, shovel_stats) tuple. Either list may be empty
-    when the corresponding count is zero.
+    Processes are spawned model-by-model so each unit draws TTFs from its
+    own fitted Weibull parameters.
+
+    Returns a (truck_stats, shovel_stats) tuple.
     """
     truck_stats: list[TruckStats] = []
-    for i in range(n_trucks):
-        truck_rng = np.random.default_rng(rng.integers(0, 2**32))
-        pm_offsets = _stagger(TRUCK_PM_SCHEDULE, truck_rng)
-        stats = TruckStats(name=f"Truck-{i}")
-        truck_stats.append(stats)
-        env.process(
-            truck_process(
-                env, f"Truck-{i}", bay, mechanic, stats, truck_rng,
-                pm_offsets=pm_offsets,
+    # When using fitted params the Weibull preventive TTFs replace the
+    # hardcoded PM schedule entirely; pass an empty dict to suppress it.
+    truck_pm = {} if USE_FITTED_PARAMS else TRUCK_PM_SCHEDULE
+    shovel_pm = {} if USE_FITTED_PARAMS else SHOVEL_PM_SCHEDULE
+    unit = 0
+    for model in _TRUCK_MODELS:
+        for _ in range(N_FLEET[model]):
+            truck_rng = np.random.default_rng(rng.integers(0, 2**32))
+            pm_offsets = _stagger(truck_pm, truck_rng)
+            name = f"Truck-{unit}({model})"
+            stats = TruckStats(name=name)
+            truck_stats.append(stats)
+            env.process(
+                truck_process(
+                    env, name, bay, mechanic, stats, truck_rng,
+                    pm_offsets=pm_offsets,
+                    failure_cfg=PREMATURE_FAILURE[model],
+                    pm_schedule=truck_pm,
+                )
             )
-        )
+            unit += 1
 
     shovel_stats: list[ShovelStats] = []
-    for i in range(n_shovels):
-        shovel_rng = np.random.default_rng(rng.integers(0, 2**32))
-        pm_offsets = _stagger(SHOVEL_PM_SCHEDULE, shovel_rng)
-        stats = ShovelStats(name=f"Shovel-{i}")
-        shovel_stats.append(stats)
-        env.process(
-            shovel_process(
-                env, f"Shovel-{i}", bay, mechanic, stats, shovel_rng,
-                pm_offsets=pm_offsets,
+    unit = 0
+    for model in _SHOVEL_MODELS:
+        for _ in range(N_FLEET[model]):
+            shovel_rng = np.random.default_rng(rng.integers(0, 2**32))
+            pm_offsets = _stagger(shovel_pm, shovel_rng)
+            name = f"Shovel-{unit}({model})"
+            stats = ShovelStats(name=name)
+            shovel_stats.append(stats)
+            env.process(
+                shovel_process(
+                    env, name, bay, mechanic, stats, shovel_rng,
+                    pm_offsets=pm_offsets,
+                    failure_cfg=PREMATURE_FAILURE[model],
+                    pm_schedule=shovel_pm,
+                )
             )
-        )
+            unit += 1
 
     return truck_stats, shovel_stats

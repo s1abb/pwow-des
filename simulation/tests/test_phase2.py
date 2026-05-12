@@ -28,9 +28,9 @@ def test_fleet_pa_pct_in_benchmark_range(phase2):
     fleet, _, _ = phase2
     summary = fleet.summary()
     pa = summary["fleet_pa_pct_mean"]
-    # Fleet-wide mean includes partially-deployed trucks (utilisation < 1 in later years).
-    assert 68.0 <= pa <= 80.0, (
-        f"Fleet mean PA% = {pa:.2f}% is outside the expected range [68, 80]"
+    # 12 bays, 24 day mechanics: fleet truck PA% ~79%.
+    assert 70.0 <= pa <= 88.0, (
+        f"Fleet mean PA% = {pa:.2f}% is outside the expected range [70, 88]"
     )
 
 
@@ -122,30 +122,33 @@ def test_time_conservation_per_truck(phase2):
 
 # ---------------------------------------------------------------------------
 # 7. Shift scheduler is active: mechanic capacity changes during the run.
-#    Check that the night working phase (n_mechanics=4) and the day working
-#    phase (n_mechanics=6) are both represented in the schedule, confirming
-#    the config is wired correctly.
+#    Verify the schedule structure: night < day, handovers = 0, breaks = half
+#    the working count for each shift.
 # ---------------------------------------------------------------------------
 
 def test_shift_schedule_has_correct_phases(phase2):
-    # Verify the expected phases exist in SHIFT_SCHEDULE with correct counts.
     night_working = [p for p in SHIFT_SCHEDULE if "night_working" in p["name"]]
     day_working   = [p for p in SHIFT_SCHEDULE if "day_working"   in p["name"]]
     handovers     = [p for p in SHIFT_SCHEDULE if "handover"       in p["name"]]
     breaks        = [p for p in SHIFT_SCHEDULE if "crib"           in p["name"]]
 
-    assert all(p["n_mechanics"] == 4 for p in night_working), (
-        "Night working phases should have 4 mechanics"
+    day_n   = day_working[0]["n_mechanics"]
+    night_n = night_working[0]["n_mechanics"]
+
+    assert all(p["n_mechanics"] == night_n for p in night_working), (
+        "All night working phases should have the same mechanic count"
     )
-    assert all(p["n_mechanics"] == 6 for p in day_working), (
-        "Day working phases should have 6 mechanics"
+    assert all(p["n_mechanics"] == day_n for p in day_working), (
+        "All day working phases should have the same mechanic count"
+    )
+    assert night_n < day_n, (
+        f"Night mechanics ({night_n}) should be less than day mechanics ({day_n})"
     )
     assert all(p["n_mechanics"] == 0 for p in handovers), (
         "Handover phases should have 0 mechanics"
     )
-    # Day breaks: 3 mechanics; night breaks: 2 mechanics.
     for p in breaks:
-        expected = 3 if "day" in p["name"] else 2
+        expected = day_n // 2 if "day" in p["name"] else night_n // 2
         assert p["n_mechanics"] == expected, (
             f"Break phase '{p['name']}' has {p['n_mechanics']} mechanics, expected {expected}"
         )

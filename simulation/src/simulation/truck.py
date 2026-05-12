@@ -15,10 +15,11 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .config import (
+    AG_REQUIRES_BAY,
     OPP_WINDOW_HRS,
+    PREMATURE_FAILURE,
     SIM_DURATION,
     TRUCK_PM_SCHEDULE,
-    TRUCK_PREMATURE_FAILURE,
 )
 from .utilisation import op_hours_to_sim_delta, sim_delta_to_op_hours
 
@@ -38,6 +39,8 @@ def truck_process(
     rng: np.random.Generator,
     *,
     pm_offsets: dict[str, float] | None = None,
+    failure_cfg: dict | None = None,
+    pm_schedule: dict | None = None,
 ):
     """Generator process for a single haul truck.
 
@@ -48,61 +51,83 @@ def truck_process(
     cumulative operating hours.  Defaults to one full interval for each PM
     (Phase 1 behaviour).  Pass randomised offsets via run_fleet() to stagger
     trucks so they don't all arrive at the workshop simultaneously.
+
+    failure_cfg: activity-group keyed premature failure parameters for this
+    unit's model.  Defaults to Cat_793F if not supplied (Phase 1 / direct calls).
     """
+    if failure_cfg is None:
+        failure_cfg = PREMATURE_FAILURE["Cat_793F"]
+    if pm_schedule is None:
+        pm_schedule = TRUCK_PM_SCHEDULE
     cum_op_hrs: float = 0.0
 
     # Next due threshold in cumulative operating hours for each PM.
     if pm_offsets is not None:
-        pm_due: dict[str, float] = {pname: float(pm_offsets[pname]) for pname in TRUCK_PM_SCHEDULE}
+        pm_due: dict[str, float] = {pname: float(pm_offsets[pname]) for pname in pm_schedule}
     else:
         pm_due: dict[str, float] = {
             pname: float(cfg["interval"])
-            for pname, cfg in TRUCK_PM_SCHEDULE.items()
+            for pname, cfg in pm_schedule.items()
         }
 
     while True:
         # ── Find the next PM threshold ────────────────────────────────────
-        next_threshold = min(pm_due.values())
-        time_to_next_pm = next_threshold - cum_op_hrs
+        if pm_due:
+            next_threshold = min(pm_due.values())
+            time_to_next_pm = next_threshold - cum_op_hrs
+            # All PMs whose due threshold coincides with next_threshold.
+            due_pms = [n for n, due in pm_due.items() if due == next_threshold]
+            # Primary PM: the one with the longest interval (subsumes shorter ones).
+            primary_pm = max(due_pms, key=lambda n: pm_schedule[n]["interval"])
+            # Duration PM: the one with the longest mean duration among concurrent
+            # PMs — the combined workshop visit takes as long as the biggest job.
+            duration_pm = max(due_pms, key=lambda n: pm_schedule[n]["duration_mean"])
+        else:
+            # No PM schedule — all events come from Weibull TTF draws.
+            time_to_next_pm = float("inf")
+            due_pms = []
+            primary_pm = None
+            duration_pm = None
 
-        # All PMs whose due threshold coincides with next_threshold.
-        due_pms = [n for n, due in pm_due.items() if due == next_threshold]
-
-        # Primary PM: the one with the longest interval (subsumes shorter ones).
-        primary_pm = max(due_pms, key=lambda n: TRUCK_PM_SCHEDULE[n]["interval"])
-        # Duration PM: the one with the longest mean duration among concurrent
-        # PMs — the combined workshop visit takes as long as the biggest job.
-        duration_pm = max(due_pms, key=lambda n: TRUCK_PM_SCHEDULE[n]["duration_mean"])
-
-        # ── Draw Weibull TTF for every component ──────────────────────────
-        # Each draw models the remaining life of the component in this
-        # operating leg. If TTF < time_to_next_pm the component fails early.
-        comp_ttf: dict[str, float] = {
-            comp: float(cfg["scale"]) * float(rng.weibull(cfg["shape"]))
-            for comp, cfg in TRUCK_PREMATURE_FAILURE.items()
+        # ── Draw Weibull TTF for every activity group ────────────────────
+        # Each draw models the remaining life in this operating leg.
+        # If TTF < time_to_next_pm the unit fails early.
+        ag_ttf: dict[str, float] = {
+            ag: float(cfg["scale"]) * float(rng.weibull(cfg["shape"]))
+            for ag, cfg in failure_cfg.items()
         }
-        min_comp = min(comp_ttf, key=comp_ttf.__getitem__)
-        min_ttf = comp_ttf[min_comp]
+        failed_ag = min(ag_ttf, key=ag_ttf.__getitem__)
+        min_ttf = ag_ttf[failed_ag]
 
         # ── Decide which event fires first ────────────────────────────────
         if min_ttf < time_to_next_pm:
-            if min_ttf >= time_to_next_pm - OPP_WINDOW_HRS:
+            if pm_due and min_ttf >= time_to_next_pm - OPP_WINDOW_HRS:
                 # Premature failure within the opportunistic window:
                 # pull the PM forward; combine both into one shop visit.
                 op_interval = time_to_next_pm
                 event_type = "opportunistic"
                 event_name = primary_pm      # PM name used for duration lookup
-                failed_comp = min_comp
+                failed_ag = failed_ag
+                dur_from_ttf = False
             else:
                 op_interval = min_ttf
-                event_type = "premature"
-                event_name = min_comp
-                failed_comp = min_comp
+                # p_* prefix → preventive TTF (counts as scheduled downtime)
+                event_type = "scheduled" if failed_ag.startswith("p_") else "premature"
+                event_name = failed_ag
+                dur_from_ttf = True
         else:
             op_interval = time_to_next_pm
             event_type = "scheduled"
             event_name = primary_pm
-            failed_comp = None
+            failed_ag = None
+            dur_from_ttf = False
+
+        # Bay required?  Default-mode PMs always use a bay.  Fitted TTF events
+        # consult AG_REQUIRES_BAY; opportunistic combines failure + PM → bay.
+        if dur_from_ttf:
+            needs_bay = AG_REQUIRES_BAY.get(event_name, True)
+        else:
+            needs_bay = True
 
         # ── Cap operating leg at simulation end ───────────────────────────
         # Convert operating-hours to sim-time (accounts for utilisation < 1).
@@ -119,28 +144,60 @@ def truck_process(
         stats.operating_hours += op_interval
         cum_op_hrs += op_interval
 
-        # ── Request workshop bay and mechanic ─────────────────────────────
+        # ── Request resources ──────────────────────────────────────────────
         queue_start = env.now
-        req_bay = bay_resource.request()
-        with (yield req_bay):
+
+        if needs_bay:
+            req_bay = bay_resource.request()
+            with (yield req_bay):
+                req_mech = mechanic_resource.request()
+                with (yield req_mech):
+                    queue_time = env.now - queue_start
+                    stats.queue_time += queue_time
+
+                    if dur_from_ttf:
+                        cfg = failure_cfg[event_name]
+                        dur = max(0.5, float(rng.normal(cfg["repair_mean"], cfg["repair_sd"])))
+                    else:
+                        cfg = pm_schedule[duration_pm]
+                        dur = max(0.5, float(rng.normal(cfg["duration_mean"], cfg["duration_sd"])))
+
+                    repair_start = env.now
+                    dur = min(dur, max(0.0, SIM_DURATION - env.now))
+
+                    if event_type == "premature":
+                        stats.downtime_unscheduled += dur
+                    else:
+                        stats.downtime_scheduled += dur
+
+                    yield env.timeout(dur)
+                    repair_end = env.now
+
+                    stats.events.append({
+                        "type": event_type,
+                        "name": event_name,
+                        "activity_group": failed_ag,
+                        "all_pms": due_pms if event_type in ("scheduled", "opportunistic") else [],
+                        "bay_used": True,
+                        "cum_op_hrs": cum_op_hrs,
+                        "op_start": op_start,
+                        "queue_start": queue_start,
+                        "repair_start": repair_start,
+                        "repair_end": repair_end,
+                        "duration": dur,
+                        "queue_time": queue_time,
+                    })
+        else:
+            # Field / on-machine work — mechanic only, no bay required.
             req_mech = mechanic_resource.request()
             with (yield req_mech):
                 queue_time = env.now - queue_start
                 stats.queue_time += queue_time
 
-                # ── Sample event duration ─────────────────────────────────
-                if event_type == "premature":
-                    cfg = TRUCK_PREMATURE_FAILURE[event_name]
-                    dur = max(0.5, float(rng.normal(cfg["repair_mean"], cfg["repair_sd"])))
-                else:
-                    # scheduled or opportunistic — use the longest concurrent PM duration
-                    cfg = TRUCK_PM_SCHEDULE[duration_pm]
-                    dur = max(0.5, float(rng.normal(cfg["duration_mean"], cfg["duration_sd"])))
+                cfg = failure_cfg[event_name]
+                dur = max(0.5, float(rng.normal(cfg["repair_mean"], cfg["repair_sd"])))
 
                 repair_start = env.now
-
-                # Clamp to remaining simulation time BEFORE booking stats so
-                # downtime never overshoots SIM_DURATION.
                 dur = min(dur, max(0.0, SIM_DURATION - env.now))
 
                 if event_type == "premature":
@@ -154,8 +211,9 @@ def truck_process(
                 stats.events.append({
                     "type": event_type,
                     "name": event_name,
-                    "failed_comp": failed_comp,
-                    "all_pms": due_pms if event_type in ("scheduled", "opportunistic") else [],
+                    "activity_group": failed_ag,
+                    "all_pms": [],
+                    "bay_used": False,
                     "cum_op_hrs": cum_op_hrs,
                     "op_start": op_start,
                     "queue_start": queue_start,
@@ -166,9 +224,9 @@ def truck_process(
                 })
 
         # ── Advance PM clocks ─────────────────────────────────────────────
+        # Fitted events (dur_from_ttf=True) have due_pms=[] so this loop is a no-op.
         if event_type in ("scheduled", "opportunistic"):
-            # All PMs that were simultaneously due get their clocks advanced.
             for pname in due_pms:
-                pm_due[pname] = next_threshold + TRUCK_PM_SCHEDULE[pname]["interval"]
+                pm_due[pname] = next_threshold + pm_schedule[pname]["interval"]
         # For a pure premature failure the PM clocks are unchanged — the
         # truck will reach the next PM threshold on its next operating leg.

@@ -104,6 +104,7 @@ def write_events(
         "equipment_type",
         "sim_time",
         "event_type",
+        "activity_group",
         "name",
         "all_pms",
         "bay_used",
@@ -133,6 +134,7 @@ def write_events(
                         "equipment_type": equip_type,
                         "sim_time": _sim_hours_to_dt(e["queue_start"]),
                         "event_type": e["type"],
+                        "activity_group": e.get("activity_group", ""),
                         "name": e["name"],
                         "all_pms": "|".join(e.get("all_pms", [])),
                         # Trucks always use a bay; shovels record bay_used explicitly.
