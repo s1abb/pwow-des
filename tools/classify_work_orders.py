@@ -54,7 +54,7 @@ except ImportError:
 # Config
 # ---------------------------------------------------------------------------
 
-DEFAULT_INPUT = Path(r"C:\repos\pwow-des\actuals\hauling_work_order_data.csv")
+DEFAULT_INPUT = Path("actuals/hauling_work_order_data.csv")
 DEFAULT_MODEL = "gpt-4o-mini"
 DEFAULT_BATCH_SIZE = 25  # rows per API request (reduces total request count)
 
@@ -123,6 +123,74 @@ Do not include any other text."""
 
 def _out_path(input_csv: Path, suffix: str) -> Path:
     return input_csv.parent / (input_csv.stem + suffix)
+
+
+def _resolve_ontology(input_csv: Path, ontology_arg: str | None) -> str | None:
+    """Return ontology path: explicit arg > auto-detected from input filename > None.
+
+    Convention:
+        ``hauling_work_order_data.csv``  →  ``classification_ontology_hauling.yaml``
+        ``loading_work_order_data.csv``  →  ``classification_ontology_loading.yaml``
+    """
+    if ontology_arg:
+        return ontology_arg
+    # Infer from the first segment of the input stem (e.g. "hauling" or "loading")
+    type_name = input_csv.stem.split("_")[0]
+    candidate = input_csv.parent / f"classification_ontology_{type_name}.yaml"
+    if candidate.exists():
+        return str(candidate)
+    return None
+
+
+def _load_ontology(path: str) -> dict:
+    """Load ontology YAML and return as dict."""
+    try:
+        import yaml
+    except ImportError:
+        sys.exit("ERROR: pyyaml not installed. Run: pip install pyyaml")
+    with open(path, encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def _ontology_categories(ontology: dict) -> tuple[list[str], list[str]]:
+    """Return (category_names, subcategory_names) including 'Other'."""
+    cats = list(ontology["categories"].keys()) + ["Other"]
+    subs: list[str] = []
+    for subcats in ontology["categories"].values():
+        subs.extend(subcats)
+    subs.append("Other")
+    return cats, subs
+
+
+def _build_system_prompt(ontology: dict) -> str:
+    """Build system prompt text from ontology categories + subcategories."""
+    lines = []
+    for cat, subcats in ontology["categories"].items():
+        lines.append(f"  {cat}:")
+        for sub in subcats:
+            lines.append(f"    - {sub}")
+    lines.append("  Other:\n    - Other")
+    categories_str = "\n".join(lines)
+
+    return f"""You are a maintenance classification assistant for a large open-pit mining operation.
+Classify each work order into a parent category and subcategory based on the description and context.
+
+Categories and subcategories:
+{categories_str}
+
+Rules:
+- Choose the most specific subcategory that matches the work described.
+- Use "Other" / "Other" only when no other category fits.
+- Descriptions may use mine-site shorthand: "c/o"=changeout, "u/s"=underside, "LHS"=left-hand side, "RPL"=replace.
+- Consider the maintenance_activity_type_id alongside the order_description:
+    MNR=Minor repair, RPL=Replace, RPR=Repair, SVC=Service, MJR=Major repair,
+    TYR=Tyres, NDT=Non-destructive testing, INS=Inspection, MOD=Modification,
+    GET=Ground engaging tools, FAB=Fabrication, UND=Undercarriage.
+
+Respond with a JSON object with a single key "results" containing an array, one entry per input row, in the same order. Each entry must be:
+  {{"id": "<work_order_id>", "category": "<parent>", "subcategory": "<sub>", "confidence": "<high|medium|low>"}}
+
+Do not include any other text."""
 
 
 def _resolve_batch_id(args: argparse.Namespace) -> str:
@@ -200,6 +268,19 @@ def cmd_prepare(args: argparse.Namespace) -> None:
     if missing:
         sys.exit(f"ERROR: Columns not found in CSV: {missing}")
 
+    # Resolve ontology and build prompt / category lists
+    ontology_path = _resolve_ontology(input_csv, getattr(args, "ontology", None))
+    if not ontology_path:
+        sys.exit(
+            f"ERROR: No ontology file found for {input_csv.name}.\n"
+            "Expected a file named classification_ontology_<type>.yaml alongside the CSV,\n"
+            "or pass --ontology <path> explicitly."
+        )
+    print(f"  Using ontology: {ontology_path}")
+    ontology = _load_ontology(ontology_path)
+    active_categories, active_subcategories = _ontology_categories(ontology)
+    active_prompt = _build_system_prompt(ontology)
+
     rows = df[prompt_cols].fillna("").to_dict(orient="records")
 
     request_count = 0
@@ -210,10 +291,11 @@ def cmd_prepare(args: argparse.Namespace) -> None:
             user_lines = []
             for j, row in enumerate(chunk, start=1):
                 user_lines.append(
-                    f"{j}. id={row['work_order_id']} | "
-                    f"activity={row['maintenance_activity_type_id']} | "
-                    f"equipment={row['sort_field']} ({row['asset_description']}) | "
-                    f"description: {row['order_description']}"
+                    f"{j}. work_order_id={row['work_order_id']} | "
+                    f"maintenance_activity_type_id={row['maintenance_activity_type_id']} | "
+                    f"sort_field={row['sort_field']} | "
+                    f"asset_description={row['asset_description']} | "
+                    f"order_description={row['order_description']}"
                 )
             user_content = "\n".join(user_lines)
 
@@ -241,10 +323,11 @@ def cmd_prepare(args: argparse.Namespace) -> None:
                                             "type": "object",
                                             "properties": {
                                                 "id": {"type": "string"},
-                                                "category": {"type": "string", "enum": CATEGORIES},
+                                                "category": {"type": "string", "enum": active_categories},
+                                                "subcategory": {"type": "string", "enum": active_subcategories},
                                                 "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
                                             },
-                                            "required": ["id", "category", "confidence"],
+                                            "required": ["id", "category", "subcategory", "confidence"],
                                             "additionalProperties": False,
                                         },
                                     }
@@ -255,7 +338,7 @@ def cmd_prepare(args: argparse.Namespace) -> None:
                         },
                     },
                     "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "system", "content": active_prompt},
                         {"role": "user", "content": user_content},
                     ],
                 },
@@ -414,17 +497,21 @@ def cmd_merge(args: argparse.Namespace) -> None:
 
     # Seed from existing classified CSV to preserve prior results (resume support)
     if out_csv.exists():
-        existing = pd.read_csv(out_csv, dtype=str, low_memory=False, usecols=["work_order_id", "work_category", "work_category_confidence"])
+        existing = pd.read_csv(out_csv, dtype=str, low_memory=False, usecols=["work_order_id", "work_category", "work_subcategory", "work_category_confidence"])
         already = existing[existing["work_category"].notna()].set_index("work_order_id")
         pre_classified = len(already)
         print(f"  Seeding {pre_classified:,} existing classifications from {out_csv.name}")
     else:
-        already = pd.DataFrame(columns=["work_category", "work_category_confidence"])
+        already = pd.DataFrame(columns=["work_category", "work_subcategory", "work_category_confidence"])
         already.index.name = "work_order_id"
         pre_classified = 0
 
     df["work_category"] = df["work_order_id"].map(already["work_category"]).astype(object)
     df["work_category_confidence"] = df["work_order_id"].map(already["work_category_confidence"]).astype(object)
+    if "work_subcategory" in already.columns:
+        df["work_subcategory"] = df["work_order_id"].map(already["work_subcategory"]).astype(object)
+    else:
+        df["work_subcategory"] = pd.NA
 
     # Index df by work_order_id for fast lookup
     id_to_idx = {row["work_order_id"]: i for i, row in df.iterrows()}
@@ -460,14 +547,14 @@ def cmd_merge(args: argparse.Namespace) -> None:
             for item in items:
                 wid = str(item.get("id", "")).strip()
                 category = item.get("category", "Other")
+                subcategory = item.get("subcategory")
                 confidence = item.get("confidence", "")
-                if category not in CATEGORIES:
-                    print(f"  [WARN] Unknown category '{category}' for id={wid} — remapping to 'Other'")
-                    category = "Other"
                 if wid in id_to_idx:
                     idx = id_to_idx[wid]
                     df.at[idx, "work_category"] = category
                     df.at[idx, "work_category_confidence"] = confidence
+                    if subcategory is not None and "work_subcategory" in df.columns:
+                        df.at[idx, "work_subcategory"] = subcategory
                     parsed_count += 1
 
     classified = df["work_category"].notna().sum()
@@ -483,6 +570,10 @@ def cmd_merge(args: argparse.Namespace) -> None:
 
     print(f"\nCategory distribution:")
     print(df["work_category"].value_counts(dropna=False).to_string())
+
+    # Drop work_subcategory column if entirely empty (single-tier run)
+    if "work_subcategory" in df.columns and df["work_subcategory"].isna().all():
+        df.drop(columns=["work_subcategory"], inplace=True)
 
     df.to_csv(out_csv, index=False)
     print(f"\nSaved → {out_csv}")
@@ -542,7 +633,8 @@ def cmd_run(args: argparse.Namespace) -> None:
         print(f"{'='*60}")
 
         # Prepare
-        prepare_args = make_args(batch_size=batch_size, limit=chunk_size, model=model, resume=True)
+        prepare_args = make_args(batch_size=batch_size, limit=chunk_size, model=model, resume=True,
+                                 ontology=getattr(args, "ontology", None))
         cmd_prepare(prepare_args)
 
         # Check if anything was written (all done edge case)
@@ -609,6 +701,8 @@ def main() -> None:
                            help="Only process the first N rows (useful for testing)")
     p_prepare.add_argument("--model", default=DEFAULT_MODEL,
                            help=f"OpenAI model to use (default: {DEFAULT_MODEL})")
+    p_prepare.add_argument("--ontology", default=None,
+                           help="Path to ontology YAML (auto-detected from input CSV name if omitted)")
     p_prepare.add_argument("--resume", action="store_true",
                            help="Skip rows already classified in the output CSV")
     p_prepare.set_defaults(func=cmd_prepare)
@@ -647,6 +741,8 @@ def main() -> None:
                        help=f"Rows per API request (default: {DEFAULT_BATCH_SIZE})")
     p_run.add_argument("--model", default=DEFAULT_MODEL,
                        help=f"OpenAI model to use (default: {DEFAULT_MODEL})")
+    p_run.add_argument("--ontology", default=None,
+                       help="Path to ontology YAML (auto-detected from input CSV name if omitted)")
     p_run.add_argument("--stall-timeout", type=int, default=10,
                        help="Minutes without progress before auto-cancelling (default: 10)")
     p_run.set_defaults(func=cmd_run)
