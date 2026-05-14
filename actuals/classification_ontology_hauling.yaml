@@ -1,0 +1,39 @@
+categories:
+  Autonomous System:
+    - AHS Control & Software
+    - AHS Sensors & Hardware
+
+  Drive:
+    - Brakes
+    - Steering
+    - Axle & Driveline
+    - Transmission & Torque Converter
+    - Tyres, Wheels & Rims
+
+  Electrical / Instrumentation:
+    - Communications & Network
+    - Instruments & Wiring
+    - Lighting
+    - Protection Devices
+    - Starting & Charging
+
+  Engine:
+    - Cooling System
+    - Fuel System
+    - Induction & Exhaust
+    - Engine Lubrication
+    - Pneumatics
+
+  Hydraulic System:
+    - Hydraulic Pumps & Motors
+    - Hydraulic Cylinders
+    - Hydraulic Lines & Components
+
+  Structure:
+    - Air Conditioning
+    - Cab & Body
+    - Frame & Chassis
+    - Fire Suppression
+    - Greasing System
+    - Suspension
+    - Tray / Body

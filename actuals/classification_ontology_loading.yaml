@@ -1,0 +1,43 @@
+categories:
+  Attachments & Implements:
+    - Bucket Assembly
+    - Boom Assembly
+    - Arm Assembly
+
+  Autonomous System:
+    - AHS Control & Software
+    - AHS Sensors & Hardware
+
+  Centre Module:
+    - Fluid Tanks
+    - Centre Module Hydraulic System
+    - Swing System
+
+  Electrical / Instrumentation:
+    - Communications & Network
+    - Instruments & Wiring
+    - Lighting
+    - Protection Devices
+    - Starting & Charging
+
+  Engine:
+    - Cooling System
+    - Fuel System
+    - Induction & Exhaust
+    - Engine Lubrication
+
+  Hydraulic System:
+    - Hydraulic Pumps & Main Pump Drive  # merges: Hydraulic Pumps, Main Pump Drive
+    - Hydraulic Accumulators
+    - Hydraulic Oil Coolers
+
+  Structure:
+    - Air Conditioning
+    - Operators Cabin  # merges: Operators Cabin, Cab Riser
+    - Fire Suppression
+    - Boarding & Access  # merges: Boarding Ladder, Platform / Handrails & Steps
+    - Greasing System
+
+  Undercarriage:
+    - Centre Frame
+    - Track Frame  # merges: Track Frame LH, Track Frame RH
